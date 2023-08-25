@@ -77,7 +77,7 @@ assert sorted(tiles) == sorted([
     'AF500M_E030N084T6', 'AF500M_E030N090T6', 'AF500M_E036N084T6',
     'AF500M_E036N090T6', 'AF500M_E042N084T6', 'AF500M_E042N090T6'])
 ```
-<sup><a href='/tests/test_equi7grid.py#L327-L333' title='Snippet source file'>snippet source</a> | <a href='#snippet-search-tiles-in-lon-lat-roi' title='Start of snippet'>anchor</a></sup>
+<sup><a href='/tests/test_equi7grid.py#L350-L356' title='Snippet source file'>snippet source</a> | <a href='#snippet-search-tiles-in-lon-lat-roi' title='Start of snippet'>anchor</a></sup>
 <!-- endSnippet -->
 
 ### Example 2: Reproject a GeoTIFF file to Equi7 tiles
