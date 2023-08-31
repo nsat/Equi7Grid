@@ -316,9 +316,14 @@ class Equi7Grid(TiledProjectionSystem):
             pixel row number; starts with 0
 
         """
+        # ensure input is not a scalar
+        if not hasattr(lat, "__len__"):
+            lat = [lat]
+        if not hasattr(lon, "__len__"):
+            lon = [lon]
         # get the xy-coordinates
         subgrid, x, y = np.vectorize(self._lonlat2xy)(lon, lat)
-        
+
         unique_subgrids = list(set(subgrid))
         tilename = np.array([None for _ in range(len(x))])
         i = np.ones(len(x)) * np.nan
