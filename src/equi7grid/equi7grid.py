@@ -317,10 +317,16 @@ class Equi7Grid(TiledProjectionSystem):
 
         """
         # get the xy-coordinates
-        subgrid, x, y = self._lonlat2xy(lon, lat)
-
-        tilename, i, j = self.subgrids[str(subgrid)].tilesys.xy2ij_in_tile(
-            x, y, lowerleft=lowerleft)
+        subgrid, x, y = np.vectorize(self._lonlat2xy)(lon, lat)
+        
+        unique_subgrids = list(set(subgrid))
+        tilename = np.array([None for _ in range(len(x))])
+        i = np.ones(len(x)) * np.nan
+        j = np.ones(len(x)) * np.nan
+        for unique_subgrid in unique_subgrids:
+            sg_idx = subgrid == unique_subgrid
+            tilename[sg_idx], i[sg_idx], j[sg_idx] = np.vectorize(self.subgrids[str(unique_subgrid)].tilesys.xy2ij_in_tile, excluded=['lowerleft'])(
+                x[sg_idx], y[sg_idx], lowerleft=lowerleft)
 
         return tilename, i, j
 
