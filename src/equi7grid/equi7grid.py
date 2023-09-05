@@ -290,11 +290,11 @@ class Equi7Grid(TiledProjectionSystem):
 
     @staticmethod
     def from_ogr_to_shapely(ogr_geom):
-        # Creating a copy of the input OGR geometry. This is done in order to 
-        # ensure that when we drop the M-values, we are only doing so in a 
-        # local copy of the geometry, not in the actual original geometry. 
+        # Creating a copy of the input OGR geometry. This is done in order to
+        # ensure that when we drop the M-values, we are only doing so in a
+        # local copy of the geometry, not in the actual original geometry.
         ogr_geom_copy = ogr.CreateGeometryFromWkb(ogr_geom.ExportToIsoWkb())
-        
+
         # Dropping the M-values
         ogr_geom_copy.SetMeasured(False)
 
@@ -302,7 +302,7 @@ class Equi7Grid(TiledProjectionSystem):
         shapely_geom = shapely.wkb.loads(bytes(ogr_geom_copy.ExportToIsoWkb()))
 
         return shapely_geom
-    
+
     def lonlat2ij_in_tile(self, lon, lat, lowerleft=False):
         """
         finds the tile and the pixel indices of a given point in lon-lat-space.
@@ -338,56 +338,48 @@ class Equi7Grid(TiledProjectionSystem):
             lat = [lat]
         if not hasattr(lon, "__len__"):
             lon = [lon]
-        
-        
-        tic = np.datetime64("now")
-        
+
         subgrid = self.get_subgrids_spatial_join(lon, lat)
-        
+
         i_ind = np.array([None for _ in range(len(lat))])
         j_ind = np.array([None for _ in range(len(lat))])
         all_tile_names = np.array([None for _ in range(len(lat))])
 
         unique_subgrids = list(set(subgrid))
-        print(f'set up pre loop - {(np.datetime64("now") - tic).astype(object).total_seconds()}')
-        
-        a_tic = np.datetime64("now")
-        tic = np.datetime64("now")
         for unique_subgrid in unique_subgrids:
             sg_idx = subgrid == unique_subgrid
             _, x, y = self._lonlat2xy_subgrid(lon[sg_idx], lat[sg_idx], unique_subgrid)
-            u_tiles, tile_idx = self.subgrids[unique_subgrid].tilesys.create_tile(x=x, y=y)
-            
+            u_tiles, tile_idx = self.subgrids[unique_subgrid].tilesys.create_tile(
+                x=x, y=y
+            )
+
             i = np.ones(len(x)) * np.nan
             j = np.ones(len(x)) * np.nan
             tile_names = np.array([None for _ in range(len(x))])
-            print(f'got x and ys - {(np.datetime64("now") - tic).astype(object).total_seconds()}')
-            
-            tic = np.datetime64("now")  
+
             for i_tile, tile in enumerate(u_tiles):
                 this_tile = tile_idx == i_tile
                 i[this_tile], j[this_tile] = tile.xy2ij(x=x[this_tile], y=y[this_tile])
                 tile_names[this_tile] = tile.name
-            
+
             i_ind[sg_idx] = i
             j_ind[sg_idx] = j
             all_tile_names[sg_idx] = tile_names
-            print(f'after tiles - {(np.datetime64("now") - tic).astype(object).total_seconds()}')
-            
-            tic = np.datetime64("now")
-        
-        print(f'whole loop - {(np.datetime64("now") - a_tic).astype(object).total_seconds()}')
-        
+
         return all_tile_names, i_ind.astype(int), j_ind.astype(int)
 
     def get_subgrids_spatial_join(self, lon, lat):
-        
-        polys = {'name': list(Equi7Grid._static_data.keys()),
-                 'geometry': [shapely.wkt.loads(Equi7Grid._static_data[subgrid]['zone_extent']) for subgrid in list(Equi7Grid._static_data.keys())],
-                 }
-        
-        gdf = gpd.GeoDataFrame(polys, crs=Proj('epsg:4326').crs)
-        
+
+        polys = {
+            "name": list(Equi7Grid._static_data.keys()),
+            "geometry": [
+                shapely.wkt.loads(Equi7Grid._static_data[subgrid]["zone_extent"])
+                for subgrid in list(Equi7Grid._static_data.keys())
+            ],
+        }
+
+        gdf = gpd.GeoDataFrame(polys, crs=Proj("epsg:4326").crs)
+
         # project the queried points into the same crs and make own geodatabase
         projection = Proj(gdf.crs)
         x, y = projection(lon.flatten(), lat.flatten())
@@ -395,18 +387,18 @@ class Equi7Grid(TiledProjectionSystem):
         points = gpd.GeoDataFrame(
             points, geometry=gpd.points_from_xy(points.x, points.y), crs=gdf.crs
         )
-        
+
         # join the two geodatabases together.
         join = gpd.sjoin(points, gdf, how="left", op="within")
-        
+
         # remove rows with more than one hit
         indices = np.array(join.index)
         unique_ind, unique_counts = np.unique(indices, return_counts=True)
         good = unique_ind[unique_counts == 1]  # indices in
-        
+
         subgrid = np.array([None for _ in range(len(lat))])
         subgrid[good] = join[join.index.isin(good.astype(int))].name
-        
+
         return subgrid
 
     def calc_length_distortion_on_ellipsoid(self, lon, lat):
@@ -603,7 +595,9 @@ class Equi7TilingSystem(TilingSystem):
             # set True if land in the tile
             covers_land = self.check_tile_covers_land(tilename=name)
             tiles_idx[tile_idx] = i_tile
-            tiles[i_tile] = Equi7Tile(self.core, name, ll_x, ll_y, covers_land=covers_land)
+            tiles[i_tile] = Equi7Tile(
+                self.core, name, ll_x, ll_y, covers_land=covers_land
+            )
 
         return tiles, tiles_idx
 
@@ -1003,10 +997,16 @@ class Equi7Tile(Tile):
             gt = self.geotransform()
 
         # get the indices
-        i = (-1.0 * (gt[2] * gt[3] - gt[0] * gt[5] + gt[5] * x - gt[2] * y) /
-                       (gt[2] * gt[4] - gt[1] * gt[5]))
-        j = (-1.0 * (-1 * gt[1] * gt[3] + gt[0] * gt[4] - gt[4] * x + gt[1] * y) /
-                       (gt[2] * gt[4] - gt[1] * gt[5]))
+        i = (
+            -1.0
+            * (gt[2] * gt[3] - gt[0] * gt[5] + gt[5] * x - gt[2] * y)
+            / (gt[2] * gt[4] - gt[1] * gt[5])
+        )
+        j = (
+            -1.0
+            * (-1 * gt[1] * gt[3] + gt[0] * gt[4] - gt[4] * x + gt[1] * y)
+            / (gt[2] * gt[4] - gt[1] * gt[5])
+        )
 
         # round to lower-closest integer
         i = np.floor(i)
