@@ -334,10 +334,13 @@ class Equi7Grid(TiledProjectionSystem):
 
         """
         # ensure input is not a scalar
+        given_in_scalar = False
         if not hasattr(lat, "__len__"):
-            lat = [lat]
+            lat = np.array([lat])
+            given_in_scalar = True
         if not hasattr(lon, "__len__"):
-            lon = [lon]
+            lon = np.array([lon])
+            given_in_scalar = True
 
         subgrid = self.get_subgrids_spatial_join(lon, lat)
 
@@ -359,13 +362,15 @@ class Equi7Grid(TiledProjectionSystem):
 
             for i_tile, tile in enumerate(u_tiles):
                 this_tile = tile_idx == i_tile
-                i[this_tile], j[this_tile] = tile.xy2ij(x=x[this_tile], y=y[this_tile])
+                i[this_tile], j[this_tile] = tile.xy2ij(x=x[this_tile], y=y[this_tile], lowerleft=lowerleft)
                 tile_names[this_tile] = tile.name
 
             i_ind[sg_idx] = i
             j_ind[sg_idx] = j
             all_tile_names[sg_idx] = tile_names
-
+        if given_in_scalar:
+            return all_tile_names[0], int(i_ind[0]), int(j_ind[0])
+        
         return all_tile_names, i_ind.astype(int), j_ind.astype(int)
 
     def get_subgrids_spatial_join(self, lon, lat):
@@ -382,7 +387,7 @@ class Equi7Grid(TiledProjectionSystem):
 
         # project the queried points into the same crs and make own geodatabase
         projection = Proj(gdf.crs)
-        x, y = projection(lon.flatten(), lat.flatten())
+        x, y = projection(lon, lat)
         points = pd.DataFrame({"x": x, "y": y})
         points = gpd.GeoDataFrame(
             points, geometry=gpd.points_from_xy(points.x, points.y), crs=gdf.crs
@@ -567,21 +572,42 @@ class Equi7TilingSystem(TilingSystem):
         -------
         Equi7Tile
             object containing info of the specified tile
+            
+        Int
+            index of the tiles in the tile list if non-scalar input
 
         Notes
         -----
         either name, or x and y, must be given.
         """
-
+        x_y_given = False
+        name_given = False
         # use the x and y coordinates for specifing the tile
         if x is not None and y is not None and name is None:
-            llx, lly = self.round_xy2lowerleft(x, y)
+            x_y_given = True
         # use the tile name for specifing the tile
         elif name is not None and x is None and y is None:
-            llx, lly = self.tilename2lowerleft(name)
+            name_given = True
         else:
             raise AttributeError('"name" or "x"&"y" must be defined!')
 
+        given_in_scalar = False
+        if not hasattr(x, "__len__"):
+            x = np.array([x])
+            given_in_scalar = True
+        if not hasattr(y, "__len__"):
+            y = np.array([y])
+            given_in_scalar = True
+        
+        if x_y_given is True:
+            llx, lly = self.round_xy2lowerleft(x, y)
+        elif name_given is True:
+            llx, lly = self.tilename2lowerleft(name)
+            llx = [llx]
+            lly = [lly]
+        else:
+            raise AttributeError('cannot reach here')
+            
         # get name of tile (assures long-form of tilename, even if short-form
         # is given)
         zipped = zip(llx, lly)
@@ -599,6 +625,9 @@ class Equi7TilingSystem(TilingSystem):
                 self.core, name, ll_x, ll_y, covers_land=covers_land
             )
 
+        if given_in_scalar:
+            return tiles[0]
+        
         return tiles, tiles_idx
 
     def point2tilename(self, x, y, shortform=False):
