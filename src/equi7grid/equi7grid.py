@@ -370,8 +370,11 @@ class Equi7Grid(TiledProjectionSystem):
             all_tile_names[sg_idx] = tile_names
         if given_in_scalar:
             return all_tile_names[0], int(i_ind[0]), int(j_ind[0])
+        
+        i_ind = np.array([int(i) if i is not None else np.nan for i in i_ind])
+        j_ind = np.array([int(j) if j is not None else np.nan for j in j_ind])
 
-        return all_tile_names, i_ind.astype(int), j_ind.astype(int)
+        return all_tile_names, i_ind, j_ind
 
     def get_subgrids_spatial_join(self, lon, lat):
 
