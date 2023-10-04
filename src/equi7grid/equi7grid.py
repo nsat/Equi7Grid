@@ -348,7 +348,7 @@ class Equi7Grid(TiledProjectionSystem):
         j_ind = np.array([None for _ in range(len(lat))])
         all_tile_names = np.array([None for _ in range(len(lat))])
 
-        unique_subgrids = list(set(subgrid))
+        unique_subgrids = list(set([s_g for s_g in subgrid if isinstance(s_g, str)]))
         for unique_subgrid in unique_subgrids:
             sg_idx = subgrid == unique_subgrid
             _, x, y = self._lonlat2xy_subgrid(lon[sg_idx], lat[sg_idx], unique_subgrid)
@@ -370,7 +370,7 @@ class Equi7Grid(TiledProjectionSystem):
             all_tile_names[sg_idx] = tile_names
         if given_in_scalar:
             return all_tile_names[0], int(i_ind[0]), int(j_ind[0])
-        
+
         return all_tile_names, i_ind.astype(int), j_ind.astype(int)
 
     def get_subgrids_spatial_join(self, lon, lat):
@@ -572,7 +572,7 @@ class Equi7TilingSystem(TilingSystem):
         -------
         Equi7Tile
             object containing info of the specified tile
-            
+
         Int
             index of the tiles in the tile list if non-scalar input
 
@@ -598,7 +598,7 @@ class Equi7TilingSystem(TilingSystem):
         if not hasattr(y, "__len__"):
             y = np.array([y])
             given_in_scalar = True
-        
+
         if x_y_given is True:
             llx, lly = self.round_xy2lowerleft(x, y)
         elif name_given is True:
@@ -607,7 +607,7 @@ class Equi7TilingSystem(TilingSystem):
             lly = [lly]
         else:
             raise AttributeError('cannot reach here')
-            
+
         # get name of tile (assures long-form of tilename, even if short-form
         # is given)
         zipped = zip(llx, lly)
@@ -627,7 +627,7 @@ class Equi7TilingSystem(TilingSystem):
 
         if given_in_scalar:
             return tiles[0]
-        
+
         return tiles, tiles_idx
 
     def point2tilename(self, x, y, shortform=False):
