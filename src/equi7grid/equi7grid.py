@@ -29,20 +29,22 @@
 Code for the Equi7 Grid.
 """
 
-import os
-import pickle
 import copy
 import itertools
+import os
+import pickle
 
+import geopandas as gpd
 import numpy as np
-
-from pytileproj.base import TiledProjectionSystem
-from pytileproj.base import TiledProjection
-from pytileproj.base import TPSProjection
-from pytileproj.base import TilingSystem
-from pytileproj.base import Tile
-from pytileproj.geometry import create_geometry_from_wkt
+import pandas as pd
+import shapely
+import shapely.wkt
 from geographiclib.geodesic import Geodesic
+from osgeo import ogr
+from pyproj import Proj
+from pytileproj.base import (Tile, TiledProjection, TiledProjectionSystem,
+                             TilingSystem, TPSProjection)
+from pytileproj.geometry import create_geometry_from_wkt
 
 
 def _load_static_data(module_path):
@@ -286,6 +288,21 @@ class Equi7Grid(TiledProjectionSystem):
         """
         return self.subgrids[name[0:2]].tilesys.create_tile(name)
 
+    @staticmethod
+    def from_ogr_to_shapely(ogr_geom):
+        # Creating a copy of the input OGR geometry. This is done in order to
+        # ensure that when we drop the M-values, we are only doing so in a
+        # local copy of the geometry, not in the actual original geometry.
+        ogr_geom_copy = ogr.CreateGeometryFromWkb(ogr_geom.ExportToIsoWkb())
+
+        # Dropping the M-values
+        ogr_geom_copy.SetMeasured(False)
+
+        # Generating a new shapely geometry
+        shapely_geom = shapely.wkb.loads(bytes(ogr_geom_copy.ExportToIsoWkb()))
+
+        return shapely_geom
+
     def lonlat2ij_in_tile(self, lon, lat, lowerleft=False):
         """
         finds the tile and the pixel indices of a given point in lon-lat-space.
@@ -317,23 +334,80 @@ class Equi7Grid(TiledProjectionSystem):
 
         """
         # ensure input is not a scalar
+        given_in_scalar = False
         if not hasattr(lat, "__len__"):
-            lat = [lat]
+            lat = np.array([lat])
+            given_in_scalar = True
         if not hasattr(lon, "__len__"):
-            lon = [lon]
-        # get the xy-coordinates
-        subgrid, x, y = np.vectorize(self._lonlat2xy)(lon, lat)
+            lon = np.array([lon])
+            given_in_scalar = True
 
-        unique_subgrids = list(set(subgrid))
-        tilename = np.array([None for _ in range(len(x))])
-        i = np.ones(len(x)) * np.nan
-        j = np.ones(len(x)) * np.nan
+        subgrid = self.get_subgrids_spatial_join(lon, lat)
+
+        i_ind = np.array([None for _ in range(len(lat))])
+        j_ind = np.array([None for _ in range(len(lat))])
+        all_tile_names = np.array([None for _ in range(len(lat))])
+
+        unique_subgrids = list(set([s_g for s_g in subgrid if isinstance(s_g, str)]))
         for unique_subgrid in unique_subgrids:
             sg_idx = subgrid == unique_subgrid
-            tilename[sg_idx], i[sg_idx], j[sg_idx] = np.vectorize(self.subgrids[str(unique_subgrid)].tilesys.xy2ij_in_tile, excluded=['lowerleft'])(
-                x[sg_idx], y[sg_idx], lowerleft=lowerleft)
+            _, x, y = self._lonlat2xy_subgrid(lon[sg_idx], lat[sg_idx], unique_subgrid)
+            u_tiles, tile_idx = self.subgrids[unique_subgrid].tilesys.create_tile(
+                x=x, y=y
+            )
 
-        return tilename, i, j
+            i = np.ones(len(x)) * np.nan
+            j = np.ones(len(x)) * np.nan
+            tile_names = np.array([None for _ in range(len(x))])
+
+            for i_tile, tile in enumerate(u_tiles):
+                this_tile = tile_idx == i_tile
+                i[this_tile], j[this_tile] = tile.xy2ij(x=x[this_tile], y=y[this_tile], lowerleft=lowerleft)
+                tile_names[this_tile] = tile.name
+
+            i_ind[sg_idx] = i
+            j_ind[sg_idx] = j
+            all_tile_names[sg_idx] = tile_names
+        if given_in_scalar:
+            return all_tile_names[0], int(i_ind[0]), int(j_ind[0])
+        
+        i_ind = np.array([int(i) if i is not None else np.nan for i in i_ind])
+        j_ind = np.array([int(j) if j is not None else np.nan for j in j_ind])
+
+        return all_tile_names, i_ind, j_ind
+
+    def get_subgrids_spatial_join(self, lon, lat):
+
+        polys = {
+            "name": list(Equi7Grid._static_data.keys()),
+            "geometry": [
+                shapely.wkt.loads(Equi7Grid._static_data[subgrid]["zone_extent"])
+                for subgrid in list(Equi7Grid._static_data.keys())
+            ],
+        }
+
+        gdf = gpd.GeoDataFrame(polys, crs=Proj("epsg:4326").crs)
+
+        # project the queried points into the same crs and make own geodatabase
+        projection = Proj(gdf.crs)
+        x, y = projection(lon, lat)
+        points = pd.DataFrame({"x": x, "y": y})
+        points = gpd.GeoDataFrame(
+            points, geometry=gpd.points_from_xy(points.x, points.y), crs=gdf.crs
+        )
+
+        # join the two geodatabases together.
+        join = gpd.sjoin(points, gdf, how="left", op="within")
+
+        # remove rows with more than one hit
+        indices = np.array(join.index)
+        unique_ind, unique_counts = np.unique(indices, return_counts=True)
+        good = unique_ind[unique_counts == 1]  # indices in
+
+        subgrid = np.array([None for _ in range(len(lat))])
+        subgrid[good] = join[join.index.isin(good.astype(int))].name
+
+        return subgrid
 
     def calc_length_distortion_on_ellipsoid(self, lon, lat):
         """
@@ -502,27 +576,62 @@ class Equi7TilingSystem(TilingSystem):
         Equi7Tile
             object containing info of the specified tile
 
+        Int
+            index of the tiles in the tile list if non-scalar input
+
         Notes
         -----
         either name, or x and y, must be given.
         """
-
+        x_y_given = False
+        name_given = False
         # use the x and y coordinates for specifing the tile
         if x is not None and y is not None and name is None:
-            llx, lly = self.round_xy2lowerleft(x, y)
+            x_y_given = True
         # use the tile name for specifing the tile
         elif name is not None and x is None and y is None:
-            llx, lly = self.tilename2lowerleft(name)
+            name_given = True
         else:
             raise AttributeError('"name" or "x"&"y" must be defined!')
 
+        given_in_scalar = False
+        if not hasattr(x, "__len__"):
+            x = np.array([x])
+            given_in_scalar = True
+        if not hasattr(y, "__len__"):
+            y = np.array([y])
+            given_in_scalar = True
+
+        if x_y_given is True:
+            llx, lly = self.round_xy2lowerleft(x, y)
+        elif name_given is True:
+            llx, lly = self.tilename2lowerleft(name)
+            llx = [llx]
+            lly = [lly]
+        else:
+            raise AttributeError('cannot reach here')
+
         # get name of tile (assures long-form of tilename, even if short-form
         # is given)
-        name = self._encode_tilename(llx, lly)
-        # set True if land in the tile
-        covers_land = self.check_tile_covers_land(tilename=name)
+        zipped = zip(llx, lly)
+        unique_x_y = list(set(zipped))
+        expanded = list(zip(llx, lly))
+        tiles_idx = np.ones(len(x)) * np.nan
+        tiles = [None for _ in range(len(unique_x_y))]
+        for i_tile, (ll_x, ll_y) in enumerate(unique_x_y):
+            tile_idx = np.all(np.array(expanded) == (ll_x, ll_y), axis=1)
+            name = self._encode_tilename(ll_x, ll_y)
+            # set True if land in the tile
+            covers_land = self.check_tile_covers_land(tilename=name)
+            tiles_idx[tile_idx] = i_tile
+            tiles[i_tile] = Equi7Tile(
+                self.core, name, ll_x, ll_y, covers_land=covers_land
+            )
 
-        return Equi7Tile(self.core, name, llx, lly, covers_land=covers_land)
+        if given_in_scalar:
+            return tiles[0]
+
+        return tiles, tiles_idx
 
     def point2tilename(self, x, y, shortform=False):
         """
@@ -883,3 +992,56 @@ class Equi7Tile(Tile):
     @property
     def shortname(self):
         return self.name[7:]
+
+    def xy2ij(self, x, y, lowerleft=False):
+        """
+        OVERWRITES THE BASE CLASS
+        returns the column and row number (i, j)
+        of a projection coordinate pair (x, y)
+
+        columns go from left to right
+        rows go either
+            top to bottom (lowerleft=False)
+            bottom to top (lowerleft=True)
+
+        Parameters
+        ----------
+        x : number
+            x coordinate in the projection
+        y : number
+            y coordinate in the projection
+        lowerleft : bool, optional
+            should the row numbering start at the bottom?
+            If yes, it returns lowerleft indices.
+
+        Returns
+        -------
+        i : integer
+            pixel column number; starts with 0
+        j : integer
+            pixel row number; starts with 0
+        """
+
+        # get the geotransform
+        if lowerleft:
+            gt = self.geotransform_lowerleft()
+        else:
+            gt = self.geotransform()
+
+        # get the indices
+        i = (
+            -1.0
+            * (gt[2] * gt[3] - gt[0] * gt[5] + gt[5] * x - gt[2] * y)
+            / (gt[2] * gt[4] - gt[1] * gt[5])
+        )
+        j = (
+            -1.0
+            * (-1 * gt[1] * gt[3] + gt[0] * gt[4] - gt[4] * x + gt[1] * y)
+            / (gt[2] * gt[4] - gt[1] * gt[5])
+        )
+
+        # round to lower-closest integer
+        i = np.floor(i)
+        j = np.floor(j)
+
+        return i, j
