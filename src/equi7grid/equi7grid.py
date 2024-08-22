@@ -370,7 +370,7 @@ class Equi7Grid(TiledProjectionSystem):
             all_tile_names[sg_idx] = tile_names
         if given_in_scalar:
             return all_tile_names[0], int(i_ind[0]), int(j_ind[0])
-        
+
         i_ind = np.array([int(i) if i is not None else np.nan for i in i_ind])
         j_ind = np.array([int(j) if j is not None else np.nan for j in j_ind])
 
@@ -397,7 +397,10 @@ class Equi7Grid(TiledProjectionSystem):
         )
 
         # join the two geodatabases together.
-        join = gpd.sjoin(points, gdf, how="left", op="within")
+        try:
+            join = gpd.sjoin(points, gdf, how="left", predicate="within")
+        except TypeError:
+            join = gpd.sjoin(points, gdf, how="left", op="within")
 
         # remove rows with more than one hit
         indices = np.array(join.index)
